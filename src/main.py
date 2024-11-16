@@ -1,129 +1,88 @@
 import pygame
 import sys
-from item import Item
+from game_state import GameState
+from start import Start
+from tutorial import Tutorial
+from game import Game
+from next_scene import NextScene
+from ending import HappyEnding, SadEnding
 
-pygame.init()
 
-screen_width, screen_height = 1080, 720
-screen = pygame.display.set_mode((screen_width, screen_height))
-pygame.display.set_caption("Character Movement with Items")
+class Main:
+    def __init__(self):
+        pygame.init()
+        self.screen = pygame.display.set_mode((1080, 720))
+        pygame.display.set_caption("Farm Game")
+        self.clock = pygame.time.Clock()
+        self.initialize_game()
 
-WHITE = (255, 255, 255)
+    def initialize_game(self):
+        self.current_state = GameState.START
+        self.character_pos = None
+        self.ghost = None
+        self.item = None
+        self.start_ticks = None
+        self.remaining_time = 60 * 2000
 
-character_width, character_height = 44, 80
-character_x = screen_width // 2 - character_width // 2
-character_y = screen_height // 2 - character_height // 2
-character_speed = 5
+        self.scenes = {
+            GameState.START: Start(self.screen),
+            GameState.TUTORIAL: Tutorial(self.screen),
+            GameState.PLAYING: Game(self.screen),
+            GameState.PLAYING_NEXT: NextScene(self.screen),
+            GameState.HAPPYENDING: HappyEnding(self.screen),
+            GameState.SADENDING: SadEnding(self.screen)
+        }
 
-# 캐릭터 이미지
-character_up = pygame.image.load("../assets/images/ham_up.png")
-character_down = pygame.image.load("../assets/images/ham_down.png")
-character_left = [pygame.image.load("../assets/images/ham_left1.png"),
-                  pygame.image.load("../assets/images/ham_left2.png")]
-character_right = [pygame.image.load("../assets/images/ham_right1.png"),
-                   pygame.image.load("../assets/images/ham_right2.png")]
-character_pick = pygame.image.load("../assets/images/ham_pick.png")
+    def run(self):
+        running = True
+        while running:
 
-water_droplet_image = pygame.image.load("../assets/images/water_droplet.png")  # 물방울 이미지
+            current_scene = self.scenes[self.current_state]
 
-item = Item("../assets/images/item_before.png", "../assets/images/item_after_full.png", "../assets/images/item_after.png")
+            if self.start_ticks is None and self.current_state == GameState.PLAYING:
+                self.start_ticks = pygame.time.get_ticks()
 
-current_image = character_down
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
 
-left_index = 0
-right_index = 0
-frame_count = 0
-is_picking = False
-pick_time = None
-is_watering = False
-water_time = None
-water_droplet_time = None
-water_droplet_duration = 500
+                new_state, new_char_pos, new_ghost, new_item = current_scene.handle_event(event)
+                if new_state != self.current_state:
+                    self.character_pos = new_char_pos
+                    self.ghost = new_ghost
+                    self.item = new_item
+                    self.current_state = new_state
 
-running = True
-while running:
-    current_time = pygame.time.get_ticks()
+                    if self.current_state == GameState.START:
+                        self.initialize_game()
+                    else:
+                        self.scenes[self.current_state] = self.scenes[self.current_state].__class__(
+                            self.screen, self.character_pos, self.ghost, self.item, self.start_ticks, self.remaining_time
+                        )
 
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            pygame.quit()
-            sys.exit()
+            if self.start_ticks:
+                elapsed_time = pygame.time.get_ticks() - self.start_ticks
+                self.remaining_time = (60 * 2000) - elapsed_time
 
-    keys = pygame.key.get_pressed()
+            if self.remaining_time <= 0 and (self.current_state == GameState.PLAYING or self.current_state == GameState.PLAYING_NEXT) :
+                picked_count = self.item.picked_count if self.item else 0
+                if picked_count >= 10:
+                    self.current_state = GameState.HAPPYENDING
+                else:
+                    self.current_state = GameState.SADENDING
 
-    character_rect = pygame.Rect(character_x, character_y, character_width, character_height)
+            current_scene.update()
+            current_scene.draw(self.remaining_time)
+            pygame.display.flip()
+            self.clock.tick(60)
 
-    if keys[pygame.K_LEFT]:
-        new_rect = character_rect.move(-character_speed, 0)
-        if not item.check_collision_move(new_rect):
-            character_x -= character_speed
-            current_image = character_left[left_index]
-            frame_count += 1
-            if frame_count % 10 == 0:
-                left_index = (left_index + 1) % 2
 
-    elif keys[pygame.K_RIGHT]:
-        new_rect = character_rect.move(character_speed, 0)
-        if not item.check_collision_move(new_rect):
-            character_x += character_speed
-            current_image = character_right[right_index]
-            frame_count += 1
-            if frame_count % 10 == 0:
-                right_index = (right_index + 1) % 2
+        pygame.quit()
+        sys.exit()
 
-    elif keys[pygame.K_UP]:
-        new_rect = character_rect.move(0, -character_speed)
-        if not item.check_collision_move(new_rect):
-            character_y -= character_speed
-            current_image = character_up
 
-    elif keys[pygame.K_DOWN]:
-        new_rect = character_rect.move(0, character_speed)
-        current_image = character_down
-        if not item.check_collision_move(new_rect):
-            character_y += character_speed
+if __name__ == "__main__":
+    game = Main()
+    game.run()
 
-    # 씨앗 심기
-    if keys[pygame.K_SPACE] and not item.seed_planted:
-        item.plant_seed((character_x, (character_y + character_height)))
 
-    # 물 주기
-    if keys[pygame.K_RETURN] and not is_watering:
-        if item.seed_planted and item.check_collision_item(character_rect):
-            item.water_seed()
-            is_watering = True
-            water_droplet_time = current_time
-
-    if item.check_if_grown():
-        is_watering = False
-
-    # 물방울
-    if is_watering and current_time - water_droplet_time >= water_droplet_duration:
-        is_watering = False
-        water_droplet_time = None
-
-    # 아이템 줍기
-    if keys[pygame.K_SPACE] and item.check_if_grown():
-        if item.check_collision_item(character_rect):
-            item.item_exists = True
-            item.pick_item(current_time)
-
-    if item.is_picked and current_time - item.pick_time >= 1000:
-        item.item_exists = False
-        item.reset_item()
-
-    screen.fill(WHITE)
-
-    screen.blit(current_image, (character_x, character_y))  # 캐릭터 이미지
-
-    item.draw_item(screen)
-
-    # 물방울 이미지 그리기
-    if is_watering:
-        water_droplet_x = character_x + (character_width - 36) // 2
-        water_droplet_y = item.item_position[1] - 62
-        screen.blit(water_droplet_image, (water_droplet_x, water_droplet_y))
-
-    pygame.display.flip()
-
-    pygame.time.Clock().tick(60)
